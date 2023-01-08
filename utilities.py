@@ -86,7 +86,6 @@ class StateMachine:
             ds = self.data_handler.save_segment(
                 self.io_handler.cam, self.anlz, self.started_str
             )
-            sleep(0.225)
             self.data_handler.upload_segment(self.started_str, ds)
             self.io_handler.stop_recording()
             self.alarm_handler.cancel_alarm()

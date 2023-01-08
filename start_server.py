@@ -48,7 +48,6 @@ async def main():
                 state.set_timer(params.idle_update_dur)
             else:
                 ds = data.save_segment(io.cam, anlz, state.started_str)
-                sleep(0.225)
                 data.upload_segment(state.started_str, ds)
                 state.set_timer(params.active_update_dur)
 

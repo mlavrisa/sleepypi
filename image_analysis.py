@@ -103,7 +103,7 @@ class DetectMotion(PiRGBAnalysis):
 
     def analyze(self, a: np.ndarray):
         self.video[self.idx] = a[self.cut :]
-        fri = a[self.cut :].astype(float)
+        fri = a[self.cut :].sum(axis=-1).astype(float)
         fri /= np.mean(fri).clip(min=1e-8)
 
         if self.unwritten:
@@ -186,7 +186,7 @@ class DetectMotion(PiRGBAnalysis):
         ) / np.sum(self.abcd[3]).clip(1e-8)
 
         np.abs(v_img, out=self.mags)
-        np.angle(v_img, out=self.args)
+        self.args = np.angle(v_img)
 
         # resize and save all of the output data
         self.data_stream[self.idx, 0] = np.real(v)
@@ -210,14 +210,14 @@ class DetectMotion(PiRGBAnalysis):
         # timestamps are good until Oct 22 2027
         self.timestamps[self.idx] = round((time() - 1609459200.0) * 20.0)
 
-        if self.jdx % 40 == 0:
-            print(self.jdx, self.restart_flag)
+        # if self.jdx % 40 == 0:
+        #     print(self.jdx, self.restart_flag)
 
         # always increment jdx
         self.jdx += 1
 
         if self.restart_flag:
-            print("restart triggered")
+            # print("restart triggered")
             if not self.file_loc:
                 raise RuntimeError("Must set file location for writing data")
             write_stream = (

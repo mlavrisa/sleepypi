@@ -499,7 +499,7 @@ def postprocess(dt):
     # 220105_005821 - pretty solid sleep, clear sleep cycles visible relatively evenly spaced, more deep sleep at the start and more REM at the end.
     # dt = "220119_010917"
 
-    gl = list(Path.glob(Path.cwd() / f"sleepypi/run{dt}/*-data.gz"))
+    gl = list(Path.cwd().glob(f"sleepypi/run{dt}/*-data.gz"))
 
     streams = []
     times = []
@@ -572,7 +572,7 @@ def postprocess(dt):
         overlay = pickle.load(f)
 
     lg_cs = np.cumsum(lengths)
-    gl = list(Path.glob(Path.cwd() / f"sleepypi/run{dt}/*-video.gz"))
+    gl = list(Path.cwd().glob(f"sleepypi/run{dt}/*-video.gz"))
     vid = VideoWriter(f"sleepypi/run{dt}/analysis-{dt}.mp4", 20)
     img = np.zeros((240, 320, 3), dtype=np.uint8)
     for idx in range(nseg):

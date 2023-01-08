@@ -17,8 +17,12 @@ from image_analysis import DetectMotion
 from picamera import PiCamera
 
 
-def datstr() -> str:
-    return datetime.now().strftime("%y%m%d_%H%M%S")
+def datstr(timestamp=None) -> str:
+    if timestamp is None:
+        dt = datetime.now()
+    else:
+        dt = datetime.fromtimestamp(timestamp)
+    return dt.strftime("%y%m%d_%H%M%S")
 
 
 class OutPin:
@@ -66,7 +70,7 @@ class DataHandler:
         body = {
             "values": [
                 [
-                    started,
+                    datstr(started),
                     datstr(),
                     data["headache"],
                     data["asthma"],
@@ -166,6 +170,7 @@ class DataHandler:
         # send a signal to restart and where it should save
         detect_motion.restart_flag = True
         detect_motion.file_loc = f"{self.home}sleepypi/run{started_str}/{ds}"
+        cam.wait_recording(0.225)
 
         return ds
 
@@ -264,6 +269,7 @@ class IOHandler:
     def start_recording(self, detect_motion_output) -> None:
         print("starting the recording...")
         self.cam.start_recording(detect_motion_output, format="rgb")
+        self.cam.wait_recording(0.1)
         self.cam.awb_mode = "shade"
         self.cam.exposure_mode = "night"
 
