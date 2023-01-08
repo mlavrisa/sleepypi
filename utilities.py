@@ -31,7 +31,7 @@ class Params:
         else:
             self.pi = True
             self.media_loc = "/home/pi/Music/birdsong_for_alarm.mp3"
-            self.base = "/home/pi/Pictures/"
+            self.base = "/home/pi/development/sleepypi/"
         self.drive_folder = "18j7nLLgED25-dQU5wht1GU49oJC_I3Xv"
         self.ss_id = "1rBQzNJERBOJ3r_5-5vmNGAVGOgBrfrPU_lklfDKIwsM"
         self.host = "192.168.0.99"
@@ -83,10 +83,11 @@ class StateMachine:
             self.next_alarm = -1
             self.started = -1
             self.timer_task.cancel()
-            self.data_handler.save_segment(
+            ds = self.data_handler.save_segment(
                 self.io_handler.cam, self.anlz, self.started_str
             )
             sleep(0.225)
+            self.data_handler.upload_segment(self.started_str, ds)
             self.io_handler.stop_recording()
             self.alarm_handler.cancel_alarm()
             self.io_handler.indicate_processing()

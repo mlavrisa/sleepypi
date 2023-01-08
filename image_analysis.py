@@ -12,7 +12,7 @@ from picamera.array import PiRGBAnalysis
 
 class DetectMotion(PiRGBAnalysis):
     def __init__(
-        self, camera: PiCamera, size: Tuple[int, int], len: int, gnorm: np.ndarray
+        self, camera: PiCamera, size: Tuple[int, int], lgth: int, gnorm: np.ndarray
     ):
 
         if int(time()) > 1824171564:
@@ -38,10 +38,10 @@ class DetectMotion(PiRGBAnalysis):
         self.sumsq = np.ones((self.h, self.w))
         self.fslp = np.zeros((self.h, self.w))
         self.fsum = np.ones((self.h, self.w))
-        self.data_stream = np.zeros((len, 15), dtype=np.float32)
+        self.data_stream = np.zeros((lgth, 15), dtype=np.float32)
         self.idx = 0
         self.jdx = 0
-        self.timestamps = np.zeros(len, dtype=np.uint32)
+        self.timestamps = np.zeros(lgth, dtype=np.uint32)
 
         xs = np.array([-self.n, 0.0, self.n])[:, None]
         powers = np.arange(4)[None, ::-1]
@@ -98,8 +98,8 @@ class DetectMotion(PiRGBAnalysis):
         self.mags = np.zeros((self.h, self.w))
         self.args = np.zeros((self.h, self.w))
 
-        self.video = np.zeros((self.len, self.h, self.w, 3), dtype=np.uint8)
-        self.v_img = np.zeros((self.len, self.h, self.w, 2), dtype=np.uint8)
+        self.video = np.zeros((lgth, self.h, self.w, 3), dtype=np.uint8)
+        self.v_img = np.zeros((lgth, self.h, self.w, 2), dtype=np.uint8)
 
     def analyze(self, a: np.ndarray):
         self.video[self.idx] = a[self.cut :]
@@ -210,10 +210,14 @@ class DetectMotion(PiRGBAnalysis):
         # timestamps are good until Oct 22 2027
         self.timestamps[self.idx] = round((time() - 1609459200.0) * 20.0)
 
+        if self.jdx % 40 == 0:
+            print(self.jdx, self.restart_flag)
+
         # always increment jdx
         self.jdx += 1
 
         if self.restart_flag:
+            print("restart triggered")
             if not self.file_loc:
                 raise RuntimeError("Must set file location for writing data")
             write_stream = (

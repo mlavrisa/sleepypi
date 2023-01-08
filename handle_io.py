@@ -53,13 +53,14 @@ class PWMPin(OutPin):
 
 class DataHandler:
     def __init__(self, home, drive_folder_id, ss_id) -> None:
-        self.g_service = None
+        self.dr_service = None
+        self.sh_service = None
         self.home = home
         self.drive_folder_id = drive_folder_id
         self.latest_subfolder_id = ""
         self.ss_id = ss_id
 
-        self.build_service()
+        self.build_services()
 
     def save_survey(self, data, started) -> None:
         body = {
@@ -78,7 +79,7 @@ class DataHandler:
             ]
         }
         query = (
-            self.g_service.spreadsheets()
+            self.sh_service.spreadsheets()
             .values()
             .append(
                 spreadsheetId=self.ss_id,
@@ -93,7 +94,7 @@ class DataHandler:
         if updated is None or not updated or updated < 1:
             print("Something went wrong while writing to the sheet!")
 
-    def build_service(self):
+    def build_services(self):
         SCOPES = ["https://www.googleapis.com/auth/drive"]
 
         creds = None
@@ -114,7 +115,8 @@ class DataHandler:
             with open(self.home + "token.json", "w") as token:
                 token.write(creds.to_json())
 
-        self.g_service = build("drive", "v3", credentials=creds)
+        self.dr_service = build("drive", "v3", credentials=creds)
+        self.sh_service = build("sheets", "v4", credentials=creds)
 
     def create_folder(self, date_string):
         # if directory exists, return
@@ -131,13 +133,13 @@ class DataHandler:
             "parents": [self.drive_folder_id],
         }
         drive_folder = (
-            self.g_service.files().create(body=folder_metadata, fields="id").execute()
+            self.dr_service.files().create(body=folder_metadata, fields="id").execute()
         )
 
         self.latest_subfolder_id = drive_folder.get("id")
 
     def put_request(self, metadata, media):
-        request = self.g_service.files().create(
+        request = self.dr_service.files().create(
             body=metadata, media_body=media, fields="id"
         )
         response = None
@@ -165,9 +167,12 @@ class DataHandler:
         detect_motion.restart_flag = True
         detect_motion.file_loc = f"{self.home}sleepypi/run{started_str}/{ds}"
 
+        return ds
+
     def upload_segment(self, started_str: str, ds: str):
         # if there was an error in starting the service, it will be None
-        if self.g_service is None:
+        if self.dr_service is None:
+            print("service is None")
             return
 
         capture_path = f"{self.home}sleepypi/run{started_str}/{ds}.jpg"
@@ -207,7 +212,7 @@ class DataHandler:
 
     def upload_video(self, started_str: str):
         # if there was an error in starting the service, it will be None
-        if self.g_service is None:
+        if self.dr_service is None:
             return
 
         vid_path = f"{self.home}sleepypi/run{started_str}/analysis-{started_str}.mp4"

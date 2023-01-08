@@ -1,5 +1,5 @@
 import asyncio
-from time import time
+from time import sleep, time
 
 import numpy as np
 
@@ -13,7 +13,7 @@ async def main():
 
     gnorm = np.load(params.base + "gnorm.npy")
 
-    data = DataHandler(params.base, params.drive_folder)
+    data = DataHandler(params.base, params.drive_folder, params.ss_id)
     io = IOHandler(params)
     alarm = Alarm(io, params)
 
@@ -47,7 +47,9 @@ async def main():
             if state.state == StateMachine.IDLE:
                 state.set_timer(params.idle_update_dur)
             else:
-                data.save_segment(io.cam, anlz, state.started_str)
+                ds = data.save_segment(io.cam, anlz, state.started_str)
+                sleep(0.225)
+                data.upload_segment(state.started_str, ds)
                 state.set_timer(params.active_update_dur)
 
 

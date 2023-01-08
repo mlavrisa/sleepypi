@@ -211,7 +211,9 @@ $RECYCLE.BIN/
 models
 sleepypi
 *.png
+*.pdf
 old
 client_secret*
 lunaR/*
 sleeptight dataset/*
+*.pdn
