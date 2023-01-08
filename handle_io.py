@@ -1,10 +1,7 @@
 import asyncio
 from datetime import datetime
-import gzip
 from os import makedirs
 from os.path import exists
-import pickle
-from time import time
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -18,6 +15,7 @@ import vlc
 import RPi.GPIO as gpio
 from image_analysis import DetectMotion
 from picamera import PiCamera
+
 
 def datstr() -> str:
     return datetime.now().strftime("%y%m%d_%H%M%S")
@@ -54,17 +52,46 @@ class PWMPin(OutPin):
 
 
 class DataHandler:
-    def __init__(self, home, drive_folder_id) -> None:
+    def __init__(self, home, drive_folder_id, ss_id) -> None:
         self.g_service = None
         self.home = home
         self.drive_folder_id = drive_folder_id
         self.latest_subfolder_id = ""
+        self.ss_id = ss_id
 
         self.build_service()
 
     def save_survey(self, data, started) -> None:
-        print("saving data:", data, started, time())
-        # TODO: write this info to a google sheet!
+        body = {
+            "values": [
+                [
+                    started,
+                    datstr(),
+                    data["headache"],
+                    data["asthma"],
+                    data["restful"],
+                    data["light_sigs"],
+                    data["food_time"],
+                    data["alcohol"],
+                    data["melatonin"],
+                ]
+            ]
+        }
+        query = (
+            self.g_service.spreadsheets()
+            .values()
+            .append(
+                spreadsheetId=self.ss_id,
+                range="A2:D",
+                insertDataOption="INSERT_ROWS",
+                valueInputOption="RAW",
+                body=body,
+            )
+        )
+        result = query.execute()
+        updated = result.get("updates").get("updatedCells")
+        if updated is None or not updated or updated < 1:
+            print("Something went wrong while writing to the sheet!")
 
     def build_service(self):
         SCOPES = ["https://www.googleapis.com/auth/drive"]
@@ -124,33 +151,34 @@ class DataHandler:
         return response
 
     def save_segment(
-        self, cam: PiCamera, detect_motion_output: DetectMotion, date_string: str
+        self, cam: PiCamera, detect_motion: DetectMotion, started_str: str
     ) -> None:
 
         ds = datstr()
 
         # take a capture
-        cam.capture(f"{self.home}sleepypi/run{date_string}/{ds}.jpg", use_video_port=True)
+        cam.capture(
+            f"{self.home}sleepypi/run{started_str}/{ds}.jpg", use_video_port=True
+        )
 
-        # send a signal to restart, wait a frame, then gzip
-        detect_motion_output.restart_flag = True
-        cam.wait_recording(0.225)
-        with gzip.open(f"{self.home}sleepypi/run{date_string}/{ds}.pkl.gz", "wb") as f:
-            pickle.dump(detect_motion_output.to_write, f)
+        # send a signal to restart and where it should save
+        detect_motion.restart_flag = True
+        detect_motion.file_loc = f"{self.home}sleepypi/run{started_str}/{ds}"
 
+    def upload_segment(self, started_str: str, ds: str):
         # if there was an error in starting the service, it will be None
         if self.g_service is None:
             return
 
-        capture_path = f"{self.home}sleepypi/run{date_string}/{ds}.jpg"
-        gzip_path = f"{self.home}sleepypi/run{date_string}/{ds}.pkl.gz"
+        capture_path = f"{self.home}sleepypi/run{started_str}/{ds}.jpg"
+        gzip_path = f"{self.home}sleepypi/run{started_str}/{ds}-data.gz"
 
         capture_metadata = {
             "name": f"{ds}.jpg",
             "parents": [self.latest_subfolder_id],
         }
         gzip_metadata = {
-            "name": f"{ds}.pkl.gz",
+            "name": f"{ds}-data.gz",
             "parents": [self.latest_subfolder_id],
         }
 
@@ -177,6 +205,35 @@ class DataHandler:
         if not capture_file or not gzip_file:
             print(f"Error: was not able to upload both files created at {ds}")
 
+    def upload_video(self, started_str: str):
+        # if there was an error in starting the service, it will be None
+        if self.g_service is None:
+            return
+
+        vid_path = f"{self.home}sleepypi/run{started_str}/analysis-{started_str}.mp4"
+
+        vid_metadata = {
+            "name": f"analysis-{started_str}.jpg",
+            "parents": [self.latest_subfolder_id],
+        }
+
+        vid_media = MediaFileUpload(vid_path, mimetype="video/mp4", resumable=True)
+
+        vid_file = self.put_request(vid_metadata, vid_media)
+
+        # TODO: If these were successful, mark the local files for deletion after
+        # processing.
+        # ALTERNATIVELY: just save them locally, process them all at the end,
+        # also locally. As they successfully upload, delete them locally. Maybe add a
+        # periodically blinking light to indicate that there is processing going on.
+        # Basically any time anything happens other than periodic breathing, or not
+        # being in bed, keep that footage, as well as a few seconds around it.
+        # Somewhat worried that this will also include things like curtain flapping,
+        # but that's an issue anyway.
+
+        if not vid_file:
+            print(f"Error: was not able to upload video file for {started_str}")
+
 
 class IOHandler:
     def __init__(self, params) -> None:
@@ -192,7 +249,7 @@ class IOHandler:
         gpio.setmode(gpio.BOARD)
 
         self.IR = OutPin(index=7, state=gpio.LOW)
-        self.OFF = OutPin(index=13, state=gpio.HIGH)
+        self.BUSY = OutPin(index=13, state=gpio.HIGH)
         self.R = PWMPin(index=15, state=gpio.LOW, freq=2000)
         self.G = PWMPin(index=16, state=gpio.LOW, freq=2000)
         self.B = PWMPin(index=18, state=gpio.LOW, freq=2000)
@@ -211,11 +268,15 @@ class IOHandler:
 
     def indicate_tracking(self) -> None:
         self.IR.update_state(gpio.HIGH)
-        self.OFF.update_state(gpio.LOW)
+        self.BUSY.update_state(gpio.LOW)
 
-    def indicate_not_tracking(self) -> None:
+    def indicate_idle(self) -> None:
         self.IR.update_state(gpio.LOW)
-        self.OFF.update_state(gpio.HIGH)
+        self.BUSY.update_state(gpio.LOW)
+
+    def indicate_processing(self) -> None:
+        self.IR.update_state(gpio.LOW)
+        self.BUSY.update_state(gpio.HIGH)
 
     def start_rgb(self) -> None:
         pwm = (self.R.pwm, self.G.pwm, self.B.pwm)
@@ -285,8 +346,8 @@ class Alarm:
         # currently fade is built into the mp3, so it's not actually possible to change
         # start 15 seconds in, way too quiet before that
         self.media_player.play()
-        self.media_player.set_time(15_000)
-        await asyncio.sleep(self.media_player.get_length() / 1000 - 15.5)
+        # self.media_player.set_time(15_000)
+        await asyncio.sleep(self.media_player.get_length() / 1000 - 0.5)  # - 15.5)
 
     async def sunrise_fn(self, wait_dur, fade_dur) -> None:
         await asyncio.sleep(wait_dur)

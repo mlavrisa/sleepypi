@@ -9,25 +9,20 @@ from image_analysis import DetectMotion
 
 
 async def main():
-
-    HOST = "192.168.0.99"  # network IP address, ideally "static" on rpi
-    PORT = 12345  # Port to listen on (non-privileged ports are > 1023)
-
-    drive_folder = "18j7nLLgED25-dQU5wht1GU49oJC_I3Xv"
     params = Params()
 
     gnorm = np.load(params.base + "gnorm.npy")
 
-    data = DataHandler(params.base, drive_folder)
+    data = DataHandler(params.base, params.drive_folder)
     io = IOHandler(params)
     alarm = Alarm(io, params)
 
-    state = StateMachine(io, alarm, params, data)
-    server = TCPServer(PORT, HOST, state)
-
     anlz = DetectMotion(
-        io.cam, params.size, int(params.active_update_dur * params.fr + 100), gnorm
+        io.cam, params.size, int(params.active_update_dur * params.fr + 20), gnorm
     )
+
+    state = StateMachine(io, alarm, params, data, anlz)
+    server = TCPServer(params.port, params.host, state)
 
     while True:
         try:

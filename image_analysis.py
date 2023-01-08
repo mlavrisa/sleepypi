@@ -1,3 +1,5 @@
+import gzip
+import pickle
 from time import time
 from typing import Tuple
 
@@ -36,7 +38,7 @@ class DetectMotion(PiRGBAnalysis):
         self.sumsq = np.ones((self.h, self.w))
         self.fslp = np.zeros((self.h, self.w))
         self.fsum = np.ones((self.h, self.w))
-        self.data_stream = np.zeros((len, 6))
+        self.data_stream = np.zeros((len, 15), dtype=np.float32)
         self.idx = 0
         self.jdx = 0
         self.timestamps = np.zeros(len, dtype=np.uint32)
@@ -89,12 +91,18 @@ class DetectMotion(PiRGBAnalysis):
         self.gnorm = gnorm.astype(np.complex128)
 
         self.restart_flag = False
+        self.file_loc = ""
         self.to_write = 0
         self.unwritten = True
 
-        self.video = np.zeros((400, self.h, self.w))
+        self.mags = np.zeros((self.h, self.w))
+        self.args = np.zeros((self.h, self.w))
+
+        self.video = np.zeros((self.len, self.h, self.w, 3), dtype=np.uint8)
+        self.v_img = np.zeros((self.len, self.h, self.w, 2), dtype=np.uint8)
 
     def analyze(self, a: np.ndarray):
+        self.video[self.idx] = a[self.cut :]
         fri = a[self.cut :].astype(float)
         fri /= np.mean(fri).clip(min=1e-8)
 
@@ -104,7 +112,7 @@ class DetectMotion(PiRGBAnalysis):
             self.bhist[:] = self.fsum
             self.unwritten = False
 
-        # keep a record of past frames, and their squares
+        # keep a record of past frames
         self.fhist[self.jdx % self.wlen] = fri
 
         # fslp - used to calculate slope
@@ -130,7 +138,7 @@ class DetectMotion(PiRGBAnalysis):
 
         # cubic polynomial with roughly the right slopes and intercepts
         self.abcd = np.tensordot(self.abcd_trans, self.obs, axes=1)
-        # convert this to a basis function components (equal areas)
+        # convert this to basis function components (equal areas)
         self.wxyz = np.tensordot(self.wxyz_trans, self.abcd, axes=1)
         self.wxyz[:] *= self.w_mask
 
@@ -139,13 +147,17 @@ class DetectMotion(PiRGBAnalysis):
         # treating wxyz as a quaternion, square it
         # this maps -wxyz and wxyz to the same place
         # this then gives us a way to find the average motion
-        # including parts of the image that are moving in opposite directions
+        # including parts of the image that are brightening or dimming in sync
         self.wxyz2[0] = np.square(self.wxyz[0]) - np.sum(
             np.square(self.wxyz[1:]), axis=0
         )
         self.wxyz2[1:] = self.wxyz[1:] * 2.0 * self.wxyz[0:1]
         np.mean(self.wxyz2, axis=(1, 2), out=self.meanvec)
-        self.meanvec /= np.linalg.norm(self.meanvec, axis=0, keepdims=True).clip(1e-8)
+        # meanvec is the average squared quaternion direction - i.e. it finds the
+        # movement vector which represents the most prominent breathing-like motion
+        norm = np.linalg.norm(self.meanvec, axis=0, keepdims=True).clip(1e-8)
+        self.meanvec /= norm
+        # dots is a mask for those parts of the image which are moving in sync
         self.dots = np.clip(
             np.tensordot(self.meanvec, self.wxyz2, axes=1) / mag.clip(1e-8), 0.0, None
         )
@@ -157,11 +169,12 @@ class DetectMotion(PiRGBAnalysis):
         self.gsum *= self.g_mask
 
         # finally, calculate the velocity
-        denom = np.sum(self.gsum * np.conj(self.gsum) * self.dots)
+        denom = np.sum(self.gsum * np.conj(self.gsum) * self.dots).astype(np.float32)
         if np.abs(denom) == 0.0:
             denom = 1e-8
         # normally velocity would use -dt * grad, but up is in -ve y direction
-        v = np.sum(self.abcd[2] * np.conj(self.gsum) * self.dots) / denom
+        v_img = self.abcd[2] * np.conj(self.gsum) * self.dots
+        v = np.sum(v_img) / denom
 
         # calculate average light position + average movement location
         posmag = np.sum(
@@ -171,6 +184,9 @@ class DetectMotion(PiRGBAnalysis):
             np.arange(self.h)[:, None] * self.abcd[3]
             + 1.0j * np.arange(self.w)[None, :] * self.abcd[3]
         ) / np.sum(self.abcd[3]).clip(1e-8)
+
+        np.abs(v_img, out=self.mags)
+        np.angle(v_img, out=self.args)
 
         # resize and save all of the output data
         self.data_stream[self.idx, 0] = np.real(v)
@@ -183,10 +199,13 @@ class DetectMotion(PiRGBAnalysis):
         self.data_stream[self.idx, 7] = self.camera.analog_gain
         self.data_stream[self.idx, 8] = self.camera.digital_gain
         self.data_stream[self.idx, 9] = self.camera.exposure_speed
+        self.data_stream[self.idx, 10] = np.real(denom)
+        self.data_stream[self.idx, 11] = np.real(norm[0])
+        self.data_stream[self.idx, 12:] = self.meanvec[:-1]
 
-        # save first little bit of video
-        if self.idx < min(400, self.data_stream.shape[0]):
-            self.video[self.idx] = fri
+        # save velocity image
+        self.v_img[self.idx, ..., 0] = (self.mags * 64.0).clip(max=255).astype(np.uint8)
+        self.v_img[self.idx, ..., 1] = (self.args * 40.743665 + 128.0).astype(np.uint8)
 
         # timestamps are good until Oct 22 2027
         self.timestamps[self.idx] = round((time() - 1609459200.0) * 20.0)
@@ -195,15 +214,22 @@ class DetectMotion(PiRGBAnalysis):
         self.jdx += 1
 
         if self.restart_flag:
-            self.to_write = (
-                np.copy(self.data_stream[: self.idx]),
-                np.copy(self.fhist),
-                np.copy(self.gsum),
-                np.copy(fri),
-                np.copy(self.timestamps[: self.idx]),
-                np.copy(self.video),
+            if not self.file_loc:
+                raise RuntimeError("Must set file location for writing data")
+            write_stream = (
+                self.data_stream[: self.idx],
+                self.timestamps[: self.idx],
             )
+            write_vid = (
+                self.video[: self.idx],
+                self.v_img[: self.idx],
+            )
+            with gzip.open(self.file_loc + "-data.gz", "wb") as f:
+                pickle.dump(write_stream, f)
+            with gzip.open(self.file_loc + "-video.gz", "wb") as f:
+                pickle.dump(write_vid, f)
             self.idx = 0
+            self.file_loc = ""
             self.restart_flag = False
         else:
             self.idx += 1

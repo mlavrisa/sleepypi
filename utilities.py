@@ -1,10 +1,12 @@
 import asyncio
 from datetime import datetime, timedelta
 from json import loads as read_json
-from time import time
+from time import sleep, time
 from os.path import exists
 
 from handle_io import Alarm, DataHandler, IOHandler
+from image_analysis import DetectMotion
+from post_processing import postprocess
 
 
 def datstr() -> str:
@@ -18,8 +20,8 @@ class Params:
         self.night_alarm_fade = 10.0
         self.nap_lights_fade = 11.0
         self.night_lights_fade = 12.0
-        self.idle_update_dur = 10.0
-        self.active_update_dur = 6.0
+        self.idle_update_dur = 3600.0
+        self.active_update_dur = 120.0
         self.size = (160, 120)
         self.fr = 5
         if exists("C:/Users"):
@@ -30,6 +32,10 @@ class Params:
             self.pi = True
             self.media_loc = "/home/pi/Music/birdsong_for_alarm.mp3"
             self.base = "/home/pi/Pictures/"
+        self.drive_folder = "18j7nLLgED25-dQU5wht1GU49oJC_I3Xv"
+        self.ss_id = "1rBQzNJERBOJ3r_5-5vmNGAVGOgBrfrPU_lklfDKIwsM"
+        self.host = "192.168.0.99"
+        self.port = 12345
 
 
 class StateMachine:
@@ -43,10 +49,12 @@ class StateMachine:
         alarm_handler: Alarm,
         params: Params,
         data_handler: DataHandler,
+        motion_anlz: DetectMotion,
     ) -> None:
         self.io_handler = io_handler
         self.alarm_handler = alarm_handler
         self.data_handler = data_handler
+        self.anlz = motion_anlz
         self.params = params
         self.state = StateMachine.IDLE
         self.last_state = StateMachine.IDLE
@@ -75,7 +83,16 @@ class StateMachine:
             self.next_alarm = -1
             self.started = -1
             self.timer_task.cancel()
+            self.data_handler.save_segment(
+                self.io_handler.cam, self.anlz, self.started_str
+            )
+            sleep(0.225)
+            self.io_handler.stop_recording()
             self.alarm_handler.cancel_alarm()
+            self.io_handler.indicate_processing()
+            postprocess(self.started_str)  # not run asynchronously
+            self.data_handler.upload_video()
+            self.io_handler.indicate_idle()
         elif cmd in ["alarm", "snooze", "smart", "watch"]:
             # is the alarm supposed to go off sooner than the next timer loop would go?
             # if yes, interrupt and update the timer loop
@@ -85,28 +102,33 @@ class StateMachine:
             if self.last_state == StateMachine.IDLE:
                 self.started = round(time())
                 self.started_str = datstr()
+                self.io_handler.start_recording(self.anlz)
+                self.io_handler.indicate_tracking()
             self.last_state = self.state
             if cmd == "watch":
                 self.state = StateMachine.WATCH
                 self.next_alarm = -1
             elif cmd == "alarm":
                 self.state = StateMachine.ALARM
-                # TODO: Fix below, this only gets the hour??? And then treats it like seconds
-                alarm_time = round(float(data["time"].split(":")[0]))
+                hour_minute = list(map(int, data["time"].split(":")))
                 now = datetime.now()
-                delta = (alarm_time - now.second) % 60  # TODO: get rid of % 60
-                next_alarm = now + timedelta(seconds=delta)
-                self.next_alarm = round(next_alarm.timestamp())
-                self.alarm_handler.start_night(delta)
+                alarm_time = datetime(
+                    now.year, now.month, now.day, hour_minute[0], hour_minute[1]
+                )
+                while alarm_time < now:
+                    alarm_time += timedelta(days=1)
+                delta = alarm_time - now
+                self.next_alarm = round(alarm_time.timestamp())
+                self.alarm_handler.start_night(int(delta.total_seconds()))
             elif cmd == "snooze":
                 self.state = StateMachine.ALARM
-                dur = float(data["duration"][:-1]) #  TODO: treats minutes as seconds
+                dur = float(data["duration"][:-1]) * 60
                 next_alarm = time() + dur
                 self.next_alarm = round(next_alarm)
                 self.alarm_handler.start_nap(dur)
             elif cmd == "smart":
                 self.state = StateMachine.ALARM
-                dur = float(data["duration"][:-1]) #  TODO: treats minutes as seconds
+                dur = float(data["duration"][:-1]) * 3600
                 next_alarm = time() + dur
                 self.next_alarm = round(next_alarm)
                 self.alarm_handler.start_night(dur)
