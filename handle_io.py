@@ -164,7 +164,9 @@ class DataHandler:
 
         # take a capture
         cam.capture(
-            f"{self.home}sleepypi/run{started_str}/{ds}.jpg", use_video_port=True
+            f"{self.home}sleepypi/run{started_str}/{ds}.jpg",
+            use_video_port=True,
+            resize=(640, 480),
         )
 
         # send a signal to restart and where it should save
@@ -223,7 +225,7 @@ class DataHandler:
         vid_path = f"{self.home}sleepypi/run{started_str}/analysis-{started_str}.mp4"
 
         vid_metadata = {
-            "name": f"analysis-{started_str}.jpg",
+            "name": f"analysis-{started_str}.mp4",
             "parents": [self.latest_subfolder_id],
         }
 
@@ -249,11 +251,12 @@ class IOHandler:
     def __init__(self, params) -> None:
 
         # set up the camera
-        self.sz = (160, 120)  # would most likely break at other resolutions
+        self.res = (1640, 1232)
+        self.sz = (160, 128)  # would most likely break at other resolutions
         self.fr = 5
         self.cam = PiCamera()
         self.cam.framerate = self.fr
-        self.cam.resolution = self.sz
+        self.cam.resolution = self.res
 
         # set up the pins
         gpio.setmode(gpio.BOARD)

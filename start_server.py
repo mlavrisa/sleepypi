@@ -1,5 +1,9 @@
 import asyncio
-from time import sleep, time
+import logging
+import sys
+from datetime import datetime
+from pathlib import Path
+from time import time
 
 import numpy as np
 
@@ -36,7 +40,6 @@ async def main():
             elif state.state in [StateMachine.ALARM, StateMachine.WATCH]:
                 if state.last_state == StateMachine.IDLE:
                     # this is a new tracking period, set a brand new timer
-                    data.create_folder(state.started_str)
                     state.set_timer(params.active_update_dur)
                 else:
                     # coming from a different tracking state, keep the same timer
@@ -48,9 +51,20 @@ async def main():
                 state.set_timer(params.idle_update_dur)
             else:
                 ds = data.save_segment(io.cam, anlz, state.started_str)
-                data.upload_segment(state.started_str, ds)
+                # data.upload_segment(state.started_str, ds)
                 state.set_timer(params.active_update_dur)
 
 
+def exception_hook(exc_type, exc_value, exc_traceback):
+    logging.error(
+        "Uncaught Exception, at " + datetime.now().strftime("%y%m%d_%H%M%S"),
+        exc_info=(exc_type, exc_value, exc_traceback),
+    )
+
+
 if __name__ == "__main__":
+    sys.excepthook = exception_hook
+    p = Path.cwd() / "error_log.txt"
+    logging.basicConfig(filename=str(p.absolute()), level=logging.INFO)
+    logging.captureWarnings(True)
     asyncio.run(main())

@@ -82,26 +82,27 @@ class StateMachine:
             self.state = StateMachine.IDLE
             self.next_alarm = -1
             self.started = -1
-            self.timer_task.cancel()
-            ds = self.data_handler.save_segment(
-                self.io_handler.cam, self.anlz, self.started_str
-            )
-            self.data_handler.upload_segment(self.started_str, ds)
+            # ds = self.data_handler.save_segment(
+            #     self.io_handler.cam, self.anlz, self.started_str
+            # )
+            # self.data_handler.upload_segment(self.started_str, ds)
             self.io_handler.stop_recording()
             self.alarm_handler.cancel_alarm()
             self.io_handler.indicate_processing()
             postprocess(self.started_str)  # not run asynchronously
-            self.data_handler.upload_video()
+            self.data_handler.upload_video(self.started_str)
             self.io_handler.indicate_idle()
+            self.timer_task.cancel()
         elif cmd in ["alarm", "snooze", "smart", "watch"]:
             # is the alarm supposed to go off sooner than the next timer loop would go?
             # if yes, interrupt and update the timer loop
             # if no, fuggetaboutit, just update state machine.
             # also want to do the alarm at some point, but we can add that later
             self.alarm_handler.cancel_alarm()
-            if self.last_state == StateMachine.IDLE:
+            if self.state == StateMachine.IDLE:
                 self.started = round(time())
                 self.started_str = datstr()
+                self.data_handler.create_folder(self.started_str)
                 self.io_handler.start_recording(self.anlz)
                 self.io_handler.indicate_tracking()
             self.last_state = self.state

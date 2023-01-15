@@ -21,7 +21,8 @@ class DetectMotion(PiRGBAnalysis):
 
         self.camera = camera
         super().__init__(camera, size)
-        self.h = int(size[1] * 0.8)  # the top 20% of the frame is where the curtain is
+        # self.h = int(size[1] * 0.8) # the top 20% of the frame is where the curtain is
+        self.h = 96
         self.cut = size[1] - self.h
         self.w = size[0]
         self.sm = np.array([1.0, 4.0, 6.0, 4.0, 1.0])
@@ -38,7 +39,7 @@ class DetectMotion(PiRGBAnalysis):
         self.sumsq = np.ones((self.h, self.w))
         self.fslp = np.zeros((self.h, self.w))
         self.fsum = np.ones((self.h, self.w))
-        self.data_stream = np.zeros((lgth, 15), dtype=np.float32)
+        self.data_stream = np.zeros((lgth, 16), dtype=np.float32)
         self.idx = 0
         self.jdx = 0
         self.timestamps = np.zeros(lgth, dtype=np.uint32)
@@ -169,7 +170,7 @@ class DetectMotion(PiRGBAnalysis):
         self.gsum *= self.g_mask
 
         # finally, calculate the velocity
-        denom = np.sum(self.gsum * np.conj(self.gsum) * self.dots).astype(np.float32)
+        denom = np.real(np.sum(self.gsum * np.conj(self.gsum) * self.dots))
         if np.abs(denom) == 0.0:
             denom = 1e-8
         # normally velocity would use -dt * grad, but up is in -ve y direction
@@ -199,9 +200,9 @@ class DetectMotion(PiRGBAnalysis):
         self.data_stream[self.idx, 7] = self.camera.analog_gain
         self.data_stream[self.idx, 8] = self.camera.digital_gain
         self.data_stream[self.idx, 9] = self.camera.exposure_speed
-        self.data_stream[self.idx, 10] = np.real(denom)
+        self.data_stream[self.idx, 10] = denom.astype(np.float32)
         self.data_stream[self.idx, 11] = np.real(norm[0])
-        self.data_stream[self.idx, 12:] = self.meanvec[:-1]
+        self.data_stream[self.idx, 12:] = self.meanvec
 
         # save velocity image
         self.v_img[self.idx, ..., 0] = (self.mags * 64.0).clip(max=255).astype(np.uint8)

@@ -107,7 +107,7 @@ def categorize_aper(shape, r2_x, r2_y, ab_x, ab_y, pos_x, pos_y):
     starts = np.argwhere(np.logical_and(np.logical_not(mov[:-1]), mov[1:])).squeeze()
     stops = np.argwhere(np.logical_and(np.logical_not(mov[1:]), mov[:-1])).squeeze()
     n_segs = starts.size
-    oob = np.zeroes(shape, dtype=bool)
+    oob = np.zeros(shape, dtype=bool)
     # TODO: When movement detection improves, move this to follow that
     # right now this will identify too many things as movement because the segments are
     # not correct and include twitches, sighs, and Tessa's movements.
@@ -118,6 +118,8 @@ def categorize_aper(shape, r2_x, r2_y, ab_x, ab_y, pos_x, pos_y):
         avg_oob = np.mean(p_oob[inb])
         if avg_oob > 0.8:
             oob[inb] = True
+    mov[0] = True
+    mov[-1] = True
     return mov, oob, odds_nonper_inst > 1.0
 
 
@@ -195,6 +197,10 @@ def find_discont_piecewise(
         astr = stops[ndx] + buf
         bl = starts[pdx] - 2 * buf - stops[pdx]
         al = starts[ndx] - 2 * buf - stops[ndx]
+        if bl < min_length:
+            pdx += 1
+            ndx = pdx + 1
+            continue
         if al < min_length:
             ndx += 1
             continue
@@ -455,14 +461,22 @@ def find_periodic(signal, freqs):
 
 def mag_arg_to_rgb_float(comp):
     hv = comp.astype(np.float32) / 255.0
+    hv[..., 0] *= 4.0
     hsv = np.concatenate(
-        (hv[..., 1], np.ones(comp.shape[:-1], dtype=np.float32), np.sqrt(hv[..., 0]))
+        (
+            hv[..., 1],
+            np.ones(comp.shape[:-1], dtype=np.float32),
+            hv[..., 0].clip(max=1.0),
+        ),
+        axis=-1,
     )
     return hsv_to_rgb(hsv)
 
 
 def is_asleep(index, r2_x, r2_y, k_x, k_y):
-    ratio = r2_x[index] ** 2 / np.max(1e-8, r2_x[index] ** 2 + r2_y[index] ** 2)
+    ratio = np.square(r2_x[index]) / max(
+        np.square(r2_x[index]) + np.square(r2_y[index]), 1e-8
+    )
     freq = ratio * k_x[index] + (1 - ratio) * k_y[index]
     return freq < 0.3  # this is really rough, will be improved later...
 
@@ -499,7 +513,9 @@ def postprocess(dt):
     # 220105_005821 - pretty solid sleep, clear sleep cycles visible relatively evenly spaced, more deep sleep at the start and more REM at the end.
     # dt = "220119_010917"
 
-    gl = list(Path.cwd().glob(f"sleepypi/run{dt}/*-data.gz"))
+    plt.switch_backend("Agg")
+
+    gl = sorted(list(Path.cwd().glob(f"sleepypi/run{dt}/*-data.gz")))
 
     streams = []
     times = []
@@ -508,22 +524,20 @@ def postprocess(dt):
     dt_obj = datetime.strptime(dt, "%y%m%d_%H%M%S")
 
     nseg = len(gl)
-    lengths = np.zeros(nseg, dtype=int)
+    lengths = np.zeros(nseg + 1, dtype=int)
 
-    for idx in trange(nseg):
+    for idx in trange(nseg, leave=False):
         with gzip.open(gl[idx], "rb") as f:
             p = pickle.load(f)
             data_stream, tstamps = p
             streams.append(data_stream)
             times.append(tstamps.astype(np.int64) * 50 + 1609459200000)
-            lengths[idx] = data_stream.shape[0]
+            lengths[idx + 1] = data_stream.shape[0]
 
     n = np.concatenate(streams, axis=0)
+    npts = n.shape[0]
     # convert times back to epoch time in milliseconds
     all_times = np.concatenate(times, axis=0)
-    print(n.shape)
-
-    plt.style.use("dark_background")
 
     freqs = np.logspace(0.1, -1.4, 150)  # indices ~50-85 are breathing frequencies
 
@@ -542,13 +556,13 @@ def postprocess(dt):
 
     exp_k = 30  # 1 second at 30 fps, 6 realtime seconds (most breaths are shorter)
     cond = np.logical_and(nonper, np.logical_not(oob))
-    expand = np.concatenate((np.full(exp_k, cond), cond, np.full(exp_k, cond[-1])))
+    expand = np.concatenate((np.full(exp_k, cond[0]), cond, np.full(exp_k, cond[-1])))
     exp_cs = np.cumsum(expand)
     incl_gaps = exp_cs[2 * exp_k :] - exp_cs[: -2 * exp_k] > 0.5
     # include any gaps less than 2 realtime seceonds (9 frames or less)
     include = medfilt(incl_gaps.astype(np.float32), 19).astype(bool)
 
-    fig, ax = plt.subplots(1, 1, figsize=(3.2, 1.34), dpi=100)
+    fig, ax = plt.subplots(1, 1, figsize=(3.2, 1.44), dpi=100)
     fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
     ax.axis("tight")
     ax.axis("off")
@@ -572,13 +586,13 @@ def postprocess(dt):
         overlay = pickle.load(f)
 
     lg_cs = np.cumsum(lengths)
-    gl = list(Path.cwd().glob(f"sleepypi/run{dt}/*-video.gz"))
+    gl = sorted(list(Path.cwd().glob(f"sleepypi/run{dt}/*-video.gz")))
     vid = VideoWriter(f"sleepypi/run{dt}/analysis-{dt}.mp4", 20)
     img = np.zeros((240, 320, 3), dtype=np.uint8)
     for idx in range(nseg):
-        start = min(0, lg_cs[idx - 1])
-        end = lg_cs[idx]
-        indices = np.nonzero(include[start:end])
+        start = lg_cs[idx]
+        end = lg_cs[idx + 1]
+        indices = np.argwhere(include[start:end]).squeeze()
         with gzip.open(gl[idx], "rb") as f:
             p = pickle.load(f)
             *_, video, comps = p
@@ -590,25 +604,38 @@ def postprocess(dt):
             tstr = dt_obj.strftime("%y-%m-%d\n%H:%M:%S ") + tzn
             vline.set_xdata(vdx)
             ax.set_xlim([vdx + start - 60, vdx + start + 60])
+            rms = np.sqrt(
+                np.mean(
+                    np.square(
+                        n[max(0, vdx + start - 20) : min(npts, vdx + start + 20), :2]
+                    )
+                )
+            )
+            ax.set_ylim([-5.0 * rms, 5.0 * rms])
             txt.set_text(tstr)
             fig.canvas.draw()
+            vid_frame = video[vdx].astype(np.float32)
+            vid_frame *= 256.0 * 0.85 / np.percentile(vid_frame[..., 0], 0.95).clip(0.1)
             velocity = mag_arg_to_rgb_float(comps[vdx])
             slp = is_asleep(vdx + start, r2_x, r2_y, k_freq_x, k_freq_y)
             text = determine_category(
                 vdx + start, mov, oob, nonper, np.max(p_shift, axis=1), slp
             )
-            graph = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).resize(
-                (134, 320, 3)
-            )
+            graph = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+            graph.resize((144, 320, 3))
             text_spot = 1.0 - overlay[text][..., None] * (1.0 - velocity[1:15, 1:73, :])
             velocity[1:15, 1:73, :] = text_spot
-            velocity *= 255
-            img[:96, :160, :] = video[vdx]
-            img[:96, 160:, :] = velocity.astype(np.uint8)
+            velocity *= 255.9
+            img[:96, :160, :] = vid_frame.clip(max=255.0).astype(np.uint8)
+            img[:96, 160:, :] = velocity.clip(max=255.0).astype(np.uint8)
             img[96:, :, :] = graph
             vid.add(img)
     vid.close()
 
     fig.clear()
     plt.close("all")
+
+
+if __name__ == "__main__":
+    postprocess("230113_005121")
 
