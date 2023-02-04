@@ -56,13 +56,14 @@ class PWMPin(OutPin):
 
 
 class DataHandler:
-    def __init__(self, home, drive_folder_id, ss_id) -> None:
+    def __init__(self, home, drive_folder_id, ss_id, capture_size) -> None:
         self.dr_service = None
         self.sh_service = None
         self.home = home
         self.drive_folder_id = drive_folder_id
         self.latest_subfolder_id = ""
         self.ss_id = ss_id
+        self.capture_size = capture_size
 
         self.build_services()
 
@@ -156,7 +157,7 @@ class DataHandler:
             return False
         return response
 
-    def save_segment(
+    def next_segment(
         self, cam: PiCamera, detect_motion: DetectMotion, started_str: str
     ) -> None:
 
@@ -166,13 +167,12 @@ class DataHandler:
         cam.capture(
             f"{self.home}sleepypi/run{started_str}/{ds}.jpg",
             use_video_port=True,
-            resize=(640, 480),
+            resize=self.capture_size,
         )
 
         # send a signal to restart and where it should save
         detect_motion.restart_flag = True
         detect_motion.file_loc = f"{self.home}sleepypi/run{started_str}/{ds}"
-        cam.wait_recording(0.225)
 
         return ds
 
@@ -251,12 +251,8 @@ class IOHandler:
     def __init__(self, params) -> None:
 
         # set up the camera
-        self.res = (1640, 1232)
-        self.sz = (160, 128)  # would most likely break at other resolutions
-        self.fr = 5
-        self.cam = PiCamera()
-        self.cam.framerate = self.fr
-        self.cam.resolution = self.res
+        self.sz = params.size
+        self.cam = PiCamera(sensor_mode=params.sensor_mode, framerate=params.fr)
 
         # set up the pins
         gpio.setmode(gpio.BOARD)
@@ -269,16 +265,20 @@ class IOHandler:
 
         # TODO: add temperature and light sensors
 
-    def start_recording(self, detect_motion_output) -> None:
+    def start_recording(self, started_str: str, detect_motion_output) -> None:
         print("starting the recording...")
-        self.cam.start_recording(detect_motion_output, format="rgb")
+        ds = datstr()
+        detect_motion_output.file_loc = f"{self.home}sleepypi/run{started_str}/{ds}"
+        detect_motion_output.open_file()
+        self.cam.start_recording(detect_motion_output, format="rgb", resize=self.sz)
         self.cam.wait_recording(0.1)
         self.cam.awb_mode = "shade"
         self.cam.exposure_mode = "night"
 
-    def stop_recording(self) -> None:
+    def stop_recording(self, detect_motion) -> None:
         print("stopping the recording...")
         self.cam.stop_recording()
+        detect_motion.stop_recording()
 
     def indicate_tracking(self) -> None:
         self.IR.update_state(gpio.HIGH)

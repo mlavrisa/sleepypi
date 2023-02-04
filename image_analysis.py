@@ -25,20 +25,19 @@ class DetectMotion(PiRGBAnalysis):
         self.h = 96
         self.cut = size[1] - self.h
         self.w = size[0]
-        self.sm = np.array([1.0, 4.0, 6.0, 4.0, 1.0])
-        self.gr = np.array([-1.0, -2.0, 0.0, 2.0, 1.0])
+        self.sm = np.array([1.0, 4.0, 6.0, 4.0, 1.0], dtype=np.float32)
+        self.gr = np.array([-1.0, -2.0, 0.0, 2.0, 1.0], dtype=np.float32)
         self.lp = self.sm - np.mean(self.sm)
-        self.un = np.ones(5, dtype=float)
         self.n = 5
         self.k = self.n // 2
         self.q = self.k * (self.k + 1) * (2 * self.k + 1) / 3
         self.wlen = self.n * 4
-        self.fhist = np.ones((self.wlen, self.h, self.w))
-        self.mhist = np.ones((self.wlen, self.h, self.w))
-        self.bhist = np.ones((self.wlen, self.h, self.w))
-        self.sumsq = np.ones((self.h, self.w))
-        self.fslp = np.zeros((self.h, self.w))
-        self.fsum = np.ones((self.h, self.w))
+        self.fhist = np.ones((self.wlen, self.h, self.w), dtype=np.float32)
+        self.mhist = np.ones((self.wlen, self.h, self.w), dtype=np.float32)
+        self.bhist = np.ones((self.wlen, self.h, self.w), dtype=np.float32)
+        self.sumsq = np.ones((self.h, self.w), dtype=np.float32)
+        self.fslp = np.zeros((self.h, self.w), dtype=np.float32)
+        self.fsum = np.ones((self.h, self.w), dtype=np.float32)
         self.data_stream = np.zeros((lgth, 16), dtype=np.float32)
         self.idx = 0
         self.jdx = 0
@@ -67,12 +66,13 @@ class DetectMotion(PiRGBAnalysis):
                 [0, self.n ** 2, 0, 0],
                 [0, 0, self.n, 0],
                 [0, -2.0 * self.n ** 2 / 3.0, 0, 0],
-            ]
+            ],
+            dtype=np.float32,
         )
         self.wxyz_trans = np.dot(np.linalg.inv(solnmat), mapmat)
-        self.wxyz = np.zeros((4, self.h, self.w))
+        self.wxyz = np.zeros((4, self.h, self.w), dtype=np.float32)
         self.wxyz2 = np.zeros_like(self.wxyz)
-        self.meanvec = np.zeros((4,))
+        self.meanvec = np.zeros((4,), np.float32)
         self.dots = np.zeros_like(self.wxyz)
 
         # set up the velocity mask. Any points above the line connecting 120,0 and 0,360
@@ -93,18 +93,17 @@ class DetectMotion(PiRGBAnalysis):
 
         self.restart_flag = False
         self.file_loc = ""
-        self.to_write = 0
+        self.vid_file = None
         self.unwritten = True
 
         self.mags = np.zeros((self.h, self.w))
         self.args = np.zeros((self.h, self.w))
 
-        self.video = np.zeros((lgth, self.h, self.w, 3), dtype=np.uint8)
-        self.v_img = np.zeros((lgth, self.h, self.w, 2), dtype=np.uint8)
+        self.vid_frame = np.zeros((self.h, self.w, 5), dtype=np.uint8)
 
     def analyze(self, a: np.ndarray):
-        self.video[self.idx] = a[self.cut :]
-        fri = a[self.cut :].sum(axis=-1).astype(float)
+        self.vid_frame[..., :3] = a[self.cut :]
+        fri = a[self.cut :].sum(axis=-1).astype(np.float32)
         fri /= np.mean(fri).clip(min=1e-8)
 
         if self.unwritten:
@@ -205,8 +204,9 @@ class DetectMotion(PiRGBAnalysis):
         self.data_stream[self.idx, 12:] = self.meanvec
 
         # save velocity image
-        self.v_img[self.idx, ..., 0] = (self.mags * 64.0).clip(max=255).astype(np.uint8)
-        self.v_img[self.idx, ..., 1] = (self.args * 40.743665 + 128.0).astype(np.uint8)
+        self.vid_frame[..., 3] = (self.mags * 64.0).clip(max=255).astype(np.uint8)
+        self.vid_frame[..., 4] = (self.args * 40.743665 + 128.0).astype(np.uint8)
+        self.vid_file.write(self.vid_frame.tobytes())
 
         # timestamps are good until Oct 22 2027
         self.timestamps[self.idx] = round((time() - 1609459200.0) * 20.0)
@@ -218,23 +218,32 @@ class DetectMotion(PiRGBAnalysis):
         self.jdx += 1
 
         if self.restart_flag:
-            # print("restart triggered")
-            if not self.file_loc:
-                raise RuntimeError("Must set file location for writing data")
-            write_stream = (
-                self.data_stream[: self.idx],
-                self.timestamps[: self.idx],
-            )
-            write_vid = (
-                self.video[: self.idx],
-                self.v_img[: self.idx],
-            )
-            with gzip.open(self.file_loc + "-data.gz", "wb") as f:
-                pickle.dump(write_stream, f)
-            with gzip.open(self.file_loc + "-video.gz", "wb") as f:
-                pickle.dump(write_vid, f)
-            self.idx = 0
-            self.file_loc = ""
-            self.restart_flag = False
+            self.write_stream()
+            self.open_file()
         else:
             self.idx += 1
+
+    def write_stream(self):
+        if not self.file_loc:
+            raise RuntimeError("Must set file location for writing data")
+        write_stream = (
+            self.data_stream[: self.idx],
+            self.timestamps[: self.idx],
+        )
+        with gzip.open(self.file_loc + "-data.gz", "wb") as f:
+            pickle.dump(write_stream, f)
+        self.idx = 0
+        self.file_loc = ""
+        self.restart_flag = False
+
+    def open_file(self):
+        if self.vid_file:
+            self.vid_file.close()
+        self.vid_file = open(self.file_loc + "-video.bin", "wb")
+        self.vid_file.write(bytes(self.vid_frame.shape))
+
+    def stop_recording(self):
+        self.write_stream()
+        self.vid_file.close()
+        self.vid_file = None
+        self.unwritten = True

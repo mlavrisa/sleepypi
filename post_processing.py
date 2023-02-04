@@ -21,17 +21,26 @@ from tqdm import trange, tqdm
 from video_writer import VideoWriter
 
 
-def wavefinding_cwt(signal, widths, omega=5):
-    output = np.empty((len(widths), len(signal)), dtype=np.complex128)
+def cwt_mag_cmpr(sig_x, sig_y, widths, omega, cmpr=50, clipmag=5.0e-3):
+    lg = int(np.ceil(len(sig_x) / cmpr))
+    half_diff = (lg * cmpr - len(sig_x)) // 2
+    output = np.zeros((len(widths), lg))
+    sig_pad = np.zeros((lg * cmpr), dtype=np.complex128)
+    sig_pad[half_diff : len(sig_x) + half_diff] = sig_x
+    sig_pad[half_diff : len(sig_x) + half_diff] += 1.0j * sig_y
+    full = np.zeros(lg * cmpr)
     for ind, width in enumerate(widths):
         # go for an odd window length about 8x the length of the width
         N = round(4 * width - 0.5) * 2 + 1
-        N = np.min([N, len(signal)])
-        wavelet_data = morlet2(N, width, omega)
+        N = np.min([N, lg * cmpr])
+        wavelet = morlet2(N, width, omega)
         # using correlate instead of convolve
-        output[ind] = correlate(
-            signal.astype(np.complex128), wavelet_data, mode="same"
-        ) * np.exp(-1.0j * omega * np.arange(len(signal)) / width)
+        full.resize(lg * cmpr)
+        np.abs(correlate(sig_pad.astype(np.complex128), wavelet, mode="same"), out=full)
+        np.clip(full, 0.0, clipmag, out=full)
+        # compress that down in the time axis by a factor of cmpr
+        full.resize((lg, cmpr))
+        output[ind] = full.sum(axis=1)
     return output
 
 
@@ -462,7 +471,7 @@ def find_periodic(signal, freqs):
 def mag_arg_to_rgb_float(comp):
     hv = comp.astype(np.float32) / 255.0
     hv[..., 0] *= 4.0
-    hsv = np.concatenate(
+    hsv = np.stack(
         (
             hv[..., 1],
             np.ones(comp.shape[:-1], dtype=np.float32),
@@ -513,8 +522,6 @@ def postprocess(dt):
     # 220105_005821 - pretty solid sleep, clear sleep cycles visible relatively evenly spaced, more deep sleep at the start and more REM at the end.
     # dt = "220119_010917"
 
-    plt.switch_backend("Agg")
-
     gl = sorted(list(Path.cwd().glob(f"sleepypi/run{dt}/*-data.gz")))
 
     streams = []
@@ -562,7 +569,28 @@ def postprocess(dt):
     # include any gaps less than 2 realtime seceonds (9 frames or less)
     include = medfilt(incl_gaps.astype(np.float32), 19).astype(bool)
 
-    fig, ax = plt.subplots(1, 1, figsize=(3.2, 1.44), dpi=100)
+    exclude = np.logical_not(include)
+    n_excl = np.count_nonzero(exclude)
+    cutoff = 4.0 * np.sqrt(np.sum(np.square(n[exclude, :2])) / n_excl)
+    omega = 10.0
+    fs = 5.0
+    freqs = np.logspace(0.1, -1.4, 150)
+    widths = omega * fs / (freqs[45:85] * 2 * np.pi)
+    mags = cwt_mag_cmpr(n[:, 0], n[:, 1], widths, omega, clipmag=cutoff)
+
+    plt.switch_backend("Agg")
+
+    fig, ax = plt.subplots(1, 1, figsize=(3.2, 0.4), dpi=100)
+    fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
+    # ax.axis("tight")
+    ax.axis("off")
+    ax.imshow(mags, aspect="auto")
+    # plt.show()
+    fig.canvas.draw()
+    mag_graph = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    mag_graph.resize((40, 320, 3))
+
+    fig, ax = plt.subplots(1, 1, figsize=(3.2, 1.04), dpi=100)
     fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
     ax.axis("tight")
     ax.axis("off")
@@ -586,16 +614,19 @@ def postprocess(dt):
         overlay = pickle.load(f)
 
     lg_cs = np.cumsum(lengths)
-    gl = sorted(list(Path.cwd().glob(f"sleepypi/run{dt}/*-video.gz")))
+    gl = sorted(list(Path.cwd().glob(f"sleepypi/run{dt}/*-video.bin")))
     vid = VideoWriter(f"sleepypi/run{dt}/analysis-{dt}.mp4", 20)
     img = np.zeros((240, 320, 3), dtype=np.uint8)
-    for idx in range(nseg):
+    loop = trange(nseg, leave=False)
+    for idx in loop:
         start = lg_cs[idx]
         end = lg_cs[idx + 1]
-        indices = np.argwhere(include[start:end]).squeeze()
-        with gzip.open(gl[idx], "rb") as f:
-            p = pickle.load(f)
-            *_, video, comps = p
+        indices = np.argwhere(include[start:end])[:, 0]
+        loop.set_description(f"{indices.size}/{end-start}")
+        with open(gl[idx], "rb") as f:
+            shp = [val for val in f.read(3)]
+            video = f.read()
+            video.resize([lengths[idx + 1]] + shp)
         # maxes = np.max(comps[..., 1], axis=(1, 2))
         # max_exp = maximum_filter1d(maxes, sm,)
         for vdx in indices:
@@ -614,28 +645,36 @@ def postprocess(dt):
             ax.set_ylim([-5.0 * rms, 5.0 * rms])
             txt.set_text(tstr)
             fig.canvas.draw()
-            vid_frame = video[vdx].astype(np.float32)
-            vid_frame *= 256.0 * 0.85 / np.percentile(vid_frame[..., 0], 0.95).clip(0.1)
-            velocity = mag_arg_to_rgb_float(comps[vdx])
+            vid_frame = video[vdx, ..., :3].astype(np.float32)
+            vf_red_rav = vid_frame[..., 0].ravel()
+            if np.count_nonzero(vf_red_rav) > 0:
+                vfupper = np.percentile(vf_red_rav, 97.0)
+                vid_frame *= 240.0 / vfupper
+            velocity = mag_arg_to_rgb_float(video[vdx, ..., -2:])
             slp = is_asleep(vdx + start, r2_x, r2_y, k_freq_x, k_freq_y)
             text = determine_category(
                 vdx + start, mov, oob, nonper, np.max(p_shift, axis=1), slp
             )
             graph = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-            graph.resize((144, 320, 3))
+            graph.resize((104, 320, 3))
             text_spot = 1.0 - overlay[text][..., None] * (1.0 - velocity[1:15, 1:73, :])
             velocity[1:15, 1:73, :] = text_spot
             velocity *= 255.9
             img[:96, :160, :] = vid_frame.clip(max=255.0).astype(np.uint8)
             img[:96, 160:, :] = velocity.clip(max=255.0).astype(np.uint8)
-            img[96:, :, :] = graph
+            img[96:-40, :, :] = graph
+            img[-40:, :, :] = mag_graph
+            # which pixels should be lit up in the magnitude graph?
+            curr = int((vdx + start) / npts * 320)
+            img[-40:, curr, 0] = 255
             vid.add(img)
     vid.close()
 
     fig.clear()
     plt.close("all")
+    print("Video Completed")
 
 
 if __name__ == "__main__":
-    postprocess("230113_005121")
+    postprocess("230129_230750")
 

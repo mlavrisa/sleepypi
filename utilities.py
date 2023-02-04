@@ -22,7 +22,9 @@ class Params:
         self.night_lights_fade = 12.0
         self.idle_update_dur = 3600.0
         self.active_update_dur = 120.0
-        self.size = (160, 120)
+        self.sensor_mode = 4
+        self.size = (160, 128)
+        self.capture = (640, 480)
         self.fr = 5
         if exists("C:/Users"):
             self.pi = False
@@ -86,7 +88,7 @@ class StateMachine:
             #     self.io_handler.cam, self.anlz, self.started_str
             # )
             # self.data_handler.upload_segment(self.started_str, ds)
-            self.io_handler.stop_recording()
+            self.io_handler.stop_recording(self.anlz)
             self.alarm_handler.cancel_alarm()
             self.io_handler.indicate_processing()
             postprocess(self.started_str)  # not run asynchronously
@@ -103,7 +105,7 @@ class StateMachine:
                 self.started = round(time())
                 self.started_str = datstr()
                 self.data_handler.create_folder(self.started_str)
-                self.io_handler.start_recording(self.anlz)
+                self.io_handler.start_recording(self.started_str, self.anlz)
                 self.io_handler.indicate_tracking()
             self.last_state = self.state
             if cmd == "watch":

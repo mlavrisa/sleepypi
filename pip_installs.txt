@@ -1,0 +1,5 @@
+pip install tqdm
+pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib
+pip install python-vlc
+pip install moviepy
+pip install pytz
