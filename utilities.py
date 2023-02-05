@@ -84,10 +84,7 @@ class StateMachine:
             self.state = StateMachine.IDLE
             self.next_alarm = -1
             self.started = -1
-            # ds = self.data_handler.save_segment(
-            #     self.io_handler.cam, self.anlz, self.started_str
-            # )
-            # self.data_handler.upload_segment(self.started_str, ds)
+
             self.io_handler.stop_recording(self.anlz)
             self.alarm_handler.cancel_alarm()
             self.io_handler.indicate_processing()
@@ -105,7 +102,9 @@ class StateMachine:
                 self.started = round(time())
                 self.started_str = datstr()
                 self.data_handler.create_folder(self.started_str)
-                self.io_handler.start_recording(self.started_str, self.anlz)
+                self.io_handler.start_recording(
+                    self.started_str, self.anlz, self.params.base
+                )
                 self.io_handler.indicate_tracking()
             self.last_state = self.state
             if cmd == "watch":

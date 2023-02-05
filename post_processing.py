@@ -625,8 +625,9 @@ def postprocess(dt):
         loop.set_description(f"{indices.size}/{end-start}")
         with open(gl[idx], "rb") as f:
             shp = [val for val in f.read(3)]
-            video = f.read()
-            video.resize([lengths[idx + 1]] + shp)
+            video = np.frombuffer(f.read(), dtype=np.uint8).reshape(
+                [lengths[idx + 1]] + shp
+            )
         # maxes = np.max(comps[..., 1], axis=(1, 2))
         # max_exp = maximum_filter1d(maxes, sm,)
         for vdx in indices:

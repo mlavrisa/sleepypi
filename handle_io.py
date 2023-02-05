@@ -265,10 +265,12 @@ class IOHandler:
 
         # TODO: add temperature and light sensors
 
-    def start_recording(self, started_str: str, detect_motion_output) -> None:
+    def start_recording(
+        self, started_str: str, detect_motion_output, home: str
+    ) -> None:
         print("starting the recording...")
         ds = datstr()
-        detect_motion_output.file_loc = f"{self.home}sleepypi/run{started_str}/{ds}"
+        detect_motion_output.file_loc = f"{home}sleepypi/run{started_str}/{ds}"
         detect_motion_output.open_file()
         self.cam.start_recording(detect_motion_output, format="rgb", resize=self.sz)
         self.cam.wait_recording(0.1)
