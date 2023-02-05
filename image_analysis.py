@@ -1,4 +1,3 @@
-import gzip
 import pickle
 from time import time
 from typing import Tuple

@@ -1,5 +1,4 @@
 from datetime import datetime
-import gzip
 from pathlib import Path
 import pickle
 
@@ -522,7 +521,7 @@ def postprocess(dt):
     # 220105_005821 - pretty solid sleep, clear sleep cycles visible relatively evenly spaced, more deep sleep at the start and more REM at the end.
     # dt = "220119_010917"
 
-    gl = sorted(list(Path.cwd().glob(f"sleepypi/run{dt}/*-data.gz")))
+    gl = sorted(list(Path.cwd().glob(f"sleepypi/run{dt}/*-data.bin")))
 
     streams = []
     times = []
@@ -534,7 +533,7 @@ def postprocess(dt):
     lengths = np.zeros(nseg + 1, dtype=int)
 
     for idx in trange(nseg, leave=False):
-        with gzip.open(gl[idx], "rb") as f:
+        with open(gl[idx], "rb") as f:
             p = pickle.load(f)
             data_stream, tstamps = p
             streams.append(data_stream)

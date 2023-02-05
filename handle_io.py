@@ -183,26 +183,26 @@ class DataHandler:
             return
 
         capture_path = f"{self.home}sleepypi/run{started_str}/{ds}.jpg"
-        gzip_path = f"{self.home}sleepypi/run{started_str}/{ds}-data.gz"
+        data_path = f"{self.home}sleepypi/run{started_str}/{ds}-data.bin"
 
         capture_metadata = {
             "name": f"{ds}.jpg",
             "parents": [self.latest_subfolder_id],
         }
-        gzip_metadata = {
-            "name": f"{ds}-data.gz",
+        data_metadata = {
+            "name": f"{ds}-data.bin",
             "parents": [self.latest_subfolder_id],
         }
 
         capture_media = MediaFileUpload(
             capture_path, mimetype="image/jpeg", resumable=True
         )
-        gzip_media = MediaFileUpload(
-            gzip_path, mimetype="application/gzip", resumable=True
+        data_media = MediaFileUpload(
+            data_path, mimetype="application/octet-stream", resumable=True
         )
 
         capture_file = self.put_request(capture_metadata, capture_media)
-        gzip_file = self.put_request(gzip_metadata, gzip_media)
+        data_file = self.put_request(data_metadata, data_media)
 
         # TODO: If these were successful, mark the local files for deletion after
         # processing.
@@ -214,7 +214,7 @@ class DataHandler:
         # Somewhat worried that this will also include things like curtain flapping,
         # but that's an issue anyway.
 
-        if not capture_file or not gzip_file:
+        if not capture_file or not data_file:
             print(f"Error: was not able to upload both files created at {ds}")
 
     def upload_video(self, started_str: str):
