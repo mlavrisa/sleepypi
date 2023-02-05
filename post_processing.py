@@ -610,7 +610,7 @@ def postprocess(dt):
     )
     tz = pytz.timezone("America/Toronto")
 
-    with open("overlay_text.pkl", "rb") as f:
+    with open("src/overlay_text.pkl", "rb") as f:
         overlay = pickle.load(f)
 
     lg_cs = np.cumsum(lengths)

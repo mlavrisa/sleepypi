@@ -15,7 +15,7 @@ from image_analysis import DetectMotion
 async def main():
     params = Params()
 
-    gnorm = np.load(params.base + "gnorm.npy")
+    gnorm = np.load(params.base + "src/gnorm.npy")
 
     data = DataHandler(params.base, params.drive_folder, params.ss_id, params.capture)
     io = IOHandler(params)
