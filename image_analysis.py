@@ -22,7 +22,7 @@ class DetectMotion(PiRGBAnalysis):
         super().__init__(camera, size)
         # self.h = int(size[1] * 0.8) # the top 20% of the frame is where the curtain is
         self.h = 96
-        self.cut = size[1] - self.h
+        self.cut = size[1] - self.h - 1
         self.w = size[0]
         self.sm = np.array([1.0, 4.0, 6.0, 4.0, 1.0])
         self.gr = np.array([-1.0, -2.0, 0.0, 2.0, 1.0])
@@ -66,7 +66,6 @@ class DetectMotion(PiRGBAnalysis):
                 [0, 0, self.n, 0],
                 [0, -2.0 * self.n ** 2 / 3.0, 0, 0],
             ],
-            dtype=np.float32,
         )
         self.wxyz_trans = np.dot(np.linalg.inv(solnmat), mapmat)
         self.wxyz = np.zeros((4, self.h, self.w))
@@ -102,14 +101,16 @@ class DetectMotion(PiRGBAnalysis):
         self.vid_frame = np.zeros((self.h, self.w, 5), dtype=np.uint8)
 
     def analyze(self, a: np.ndarray):
-        self.vid_frame[..., :3] = a[self.cut :]
-        fri = a[self.cut :].sum(axis=-1).astype(np.float32)
+        self.vid_frame[..., :3] = a[self.cut : -1]
+        fri = a[self.cut : -1].sum(axis=-1).astype(float)
         fri /= np.mean(fri).clip(min=1e-8)
 
         if self.unwritten:
             self.fhist[:] = fri
             self.fsum = fri * (self.n - 1.0)
+            self.fslp[:] = 0.0
             self.bhist[:] = self.fsum
+            self.mhist[:] = 0.0
             self.unwritten = False
 
         # keep a record of past frames
